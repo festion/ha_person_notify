@@ -1,6 +1,6 @@
 {
   "name": "Person-Based Notification Router",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "slug": "person_notify",
   "description": "Person-based notification routing with severity levels and user preferences",
   "url": "https://github.com/festion/ha_person_notify",
