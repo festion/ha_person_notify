@@ -1,8 +1,8 @@
 {
   "name": "Person-Based Notification Router",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "slug": "person_notify",
-  "description": "Person-based notification routing with Home Assistant integration and user-configurable preferences",
+  "description": "Person-based notification routing with Home Assistant integration and user-specific preferences",
   "url": "https://github.com/festion/ha_person_notify",
   "startup": "application",
   "boot": "auto",

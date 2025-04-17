@@ -133,10 +133,22 @@ MAIN_TEMPLATE = """
         .status-success { background-color: #e8f5e9; color: #2e7d32; }
         .status-error { background-color: #ffebee; color: #c62828; }
         .hidden { display: none; }
+        .user-info {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            background-color: #e3f2fd;
+            padding: 10px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
     <h1>Person-Based Notification System</h1>
+    
+    <div class="user-info" id="user-info">
+        <!-- Current user will be displayed here -->
+    </div>
     
     <div class="tabs">
         <div class="tab active" data-tab="preferences">Notification Preferences</div>
@@ -149,15 +161,8 @@ MAIN_TEMPLATE = """
     
     <div id="preferences" class="tab-content active">
         <div class="card">
-            <h2>User Notification Preferences</h2>
-            <p>Configure how each person receives notifications based on severity level.</p>
-            
-            <div class="form-group">
-                <label for="current-user">Select User:</label>
-                <select id="current-user">
-                    <!-- Populated by JavaScript -->
-                </select>
-            </div>
+            <h2>Your Notification Preferences</h2>
+            <p>Configure how you receive notifications based on severity level.</p>
             
             <table>
                 <thead>
@@ -282,7 +287,6 @@ curl -X POST http://your-homeassistant:8732/notify \\
         let config = {};
         let currentUser = '';
         let availableNotifyServices = [];
-        let haPeople = [];
         
         // Initialize the UI
         document.addEventListener('DOMContentLoaded', function() {
@@ -297,26 +301,22 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 });
             });
             
-            // Fetch Home Assistant people
-            fetchHaPeople();
+            // Fetch current user
+            fetchCurrentUser();
             
             // Fetch notification services
             fetchNotifyServices();
             
-            // Load config
-            fetchConfig();
-            
             // Set up event listeners
-            document.getElementById('current-user').addEventListener('change', userChanged);
             document.getElementById('add-all-device-btn').addEventListener('click', () => addDevice('all'));
             document.getElementById('add-mobile-device-btn').addEventListener('click', () => addDevice('mobile'));
             document.getElementById('add-desktop-device-btn').addEventListener('click', () => addDevice('desktop'));
             document.getElementById('send-test-btn').addEventListener('click', sendTestNotification);
         });
         
-        // Fetch Home Assistant people
-        function fetchHaPeople() {
-            fetch(window.location.pathname + 'ha_people')
+        // Fetch current user
+        function fetchCurrentUser() {
+            fetch(window.location.pathname + 'current_user')
                 .then(response => {
                     if (!response.ok) {
                         throw new Error(`HTTP error! Status: ${response.status}`);
@@ -324,12 +324,15 @@ curl -X POST http://your-homeassistant:8732/notify \\
                     return response.json();
                 })
                 .then(data => {
-                    haPeople = data.people;
-                    synchronizeConfig();
+                    currentUser = data.user;
+                    document.getElementById('user-info').textContent = `Signed in as: ${currentUser}`;
+                    
+                    // Load config after getting current user
+                    fetchConfig();
                 })
                 .catch(error => {
-                    showStatusMessage('Error loading Home Assistant people: ' + error.message, 'error');
-                    console.error('Error loading people:', error);
+                    showStatusMessage('Error determining current user: ' + error.message, 'error');
+                    console.error('Error loading user:', error);
                 });
         }
         
@@ -372,28 +375,6 @@ curl -X POST http://your-homeassistant:8732/notify \\
             });
         }
         
-        // Synchronize config with Home Assistant people
-        function synchronizeConfig() {
-            fetch(window.location.pathname + 'sync_people', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ people: haPeople })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'ok') {
-                    fetchConfig(); // Reload config after sync
-                } else {
-                    showStatusMessage(`Error: ${data.message}`, 'error');
-                }
-            })
-            .catch(error => {
-                showStatusMessage('Error synchronizing people: ' + error.message, 'error');
-            });
-        }
-        
         // Fetch configuration
         function fetchConfig() {
             fetch(window.location.pathname + 'config')
@@ -405,40 +386,13 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 })
                 .then(data => {
                     config = data;
-                    updateUserSelect();
+                    updatePreferencesTable();
+                    loadDevicesForUser();
                 })
                 .catch(error => {
                     showStatusMessage('Error loading configuration: ' + error.message, 'error');
                     console.error('Error loading configuration:', error);
                 });
-        }
-        
-        // Update user select dropdown
-        function updateUserSelect() {
-            const select = document.getElementById('current-user');
-            select.innerHTML = '';
-            
-            for (const person in config.audiences) {
-                const option = document.createElement('option');
-                option.value = person;
-                option.textContent = person;
-                select.appendChild(option);
-            }
-            
-            // Select first user by default
-            if (select.options.length > 0) {
-                currentUser = select.options[0].value;
-                userChanged();
-            }
-        }
-        
-        // Handle user selection change
-        function userChanged() {
-            const select = document.getElementById('current-user');
-            currentUser = select.value;
-            
-            updatePreferencesTable();
-            loadDevicesForUser();
         }
         
         // Update the preferences table for current user
@@ -639,6 +593,23 @@ curl -X POST http://your-homeassistant:8732/notify \\
 </html>
 """
 
+def get_current_user(request):
+    """Determine the current user based on Home Assistant user."""
+    # In a real implementation, this would get the user from the Home Assistant auth
+    # For now, we'll try to get it from the request headers or use a default user
+    ha_user = request.headers.get('X-Supervisor-User', None)
+    
+    if ha_user:
+        return ha_user
+    
+    # Fallback to the first person in the config
+    config = load_config()
+    if config and "audiences" in config and config["audiences"]:
+        return next(iter(config["audiences"].keys()))
+    
+    # Last resort default
+    return "default_user"
+
 def get_ha_people():
     """Get people entities from Home Assistant."""
     try:
@@ -751,6 +722,13 @@ def sync_config_with_people(people):
 def index():
     """Serve the main web UI."""
     return render_template_string(MAIN_TEMPLATE)
+
+@app.route(f"{INGRESS_PATH}/current_user", methods=["GET"])
+@app.route("/current_user", methods=["GET"])
+def current_user():
+    """Return the current user."""
+    user = get_current_user(request)
+    return jsonify({"user": user})
 
 @app.route(f"{INGRESS_PATH}/ha_people", methods=["GET"])
 @app.route("/ha_people", methods=["GET"])
