@@ -3,7 +3,7 @@ import json
 import yaml
 import hashlib
 import os
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, Response
 
 CONFIG_FILE = "notification_config.yaml"
 DEDUPLICATION_TTL = 300  # seconds
@@ -150,43 +150,33 @@ MAIN_TEMPLATE = """
             <h2>User Notification Preferences</h2>
             <p>Configure how each person receives notifications based on severity level.</p>
             
+            <div class="form-group">
+                <label for="current-user">Select User:</label>
+                <select id="current-user">
+                    <!-- Populated by JavaScript -->
+                </select>
+            </div>
+            
             <table>
                 <thead>
                     <tr>
-                        <th>Person</th>
-                        <th>Critical Notifications</th>
-                        <th>Warning Notifications</th>
-                        <th>Info Notifications</th>
-                        <th>Actions</th>
+                        <th>Severity</th>
+                        <th>Notification Preference</th>
                     </tr>
                 </thead>
                 <tbody id="preferences-table">
                     <!-- Populated by JavaScript -->
                 </tbody>
             </table>
-            
-            <h3>Add New Person</h3>
-            <div class="form-group">
-                <label for="new-person-name">Person Name:</label>
-                <input type="text" id="new-person-name" placeholder="Enter name">
-            </div>
-            <button id="add-person-btn">Add Person</button>
         </div>
     </div>
     
     <div id="devices" class="tab-content">
         <div class="card">
             <h2>Device Management</h2>
-            <p>Manage notification devices for each person.</p>
+            <p>Manage your notification devices.</p>
             
-            <div class="form-group">
-                <label for="device-person-select">Select Person:</label>
-                <select id="device-person-select">
-                    <!-- Populated by JavaScript -->
-                </select>
-            </div>
-            
-            <h3>Devices</h3>
+            <h3>Your Devices</h3>
             <div id="device-lists">
                 <div>
                     <h4>All Devices</h4>
@@ -228,13 +218,6 @@ MAIN_TEMPLATE = """
         <div class="card">
             <h2>Test Notifications</h2>
             <p>Send test notifications to verify your configuration.</p>
-            
-            <div class="form-group">
-                <label for="test-person">Person to Notify:</label>
-                <select id="test-person">
-                    <!-- Populated by JavaScript -->
-                </select>
-            </div>
             
             <div class="form-group">
                 <label for="test-severity">Severity Level:</label>
@@ -289,6 +272,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
     <script>
         // Load configuration data
         let config = {};
+        let currentUser = '';
         
         // Initialize the UI
         document.addEventListener('DOMContentLoaded', function() {
@@ -307,8 +291,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
             fetchConfig();
             
             // Set up event listeners
-            document.getElementById('add-person-btn').addEventListener('click', addPerson);
-            document.getElementById('device-person-select').addEventListener('change', loadDevicesForPerson);
+            document.getElementById('current-user').addEventListener('change', userChanged);
             document.getElementById('add-all-device-btn').addEventListener('click', () => addDevice('all'));
             document.getElementById('add-mobile-device-btn').addEventListener('click', () => addDevice('mobile'));
             document.getElementById('add-desktop-device-btn').addEventListener('click', () => addDevice('desktop'));
@@ -317,99 +300,99 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Fetch configuration
         function fetchConfig() {
-            fetch('/config')
-                .then(response => response.json())
+            fetch(window.location.pathname + 'config')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
                     config = data;
-                    updatePreferencesTable();
-                    updatePersonSelects();
+                    updateUserSelect();
                 })
                 .catch(error => {
                     showStatusMessage('Error loading configuration: ' + error.message, 'error');
+                    console.error('Error loading configuration:', error);
                 });
         }
         
-        // Update the preferences table
+        // Update user select dropdown
+        function updateUserSelect() {
+            const select = document.getElementById('current-user');
+            select.innerHTML = '';
+            
+            for (const person in config.audiences) {
+                const option = document.createElement('option');
+                option.value = person;
+                option.textContent = person;
+                select.appendChild(option);
+            }
+            
+            // Select first user by default
+            if (select.options.length > 0) {
+                currentUser = select.options[0].value;
+                userChanged();
+            }
+        }
+        
+        // Handle user selection change
+        function userChanged() {
+            const select = document.getElementById('current-user');
+            currentUser = select.value;
+            
+            updatePreferencesTable();
+            loadDevicesForUser();
+        }
+        
+        // Update the preferences table for current user
         function updatePreferencesTable() {
             const tbody = document.getElementById('preferences-table');
             tbody.innerHTML = '';
             
-            const preferenceOptions = ['All Devices', 'Mobile Only', 'Desktop Only', 'Log Only', 'None'];
+            if (!currentUser || !config.audiences[currentUser]) return;
             
-            for (const person in config.audiences) {
+            const preferenceOptions = ['All Devices', 'Mobile Only', 'Desktop Only', 'Log Only', 'None'];
+            const severities = ['critical', 'warning', 'info'];
+            
+            severities.forEach(severity => {
                 const row = document.createElement('tr');
                 
-                // Person name
+                // Severity name
                 const nameCell = document.createElement('td');
-                nameCell.textContent = person;
+                nameCell.textContent = severity.charAt(0).toUpperCase() + severity.slice(1);
                 row.appendChild(nameCell);
                 
-                // Create preference selects
-                ['critical', 'warning', 'info'].forEach(severity => {
-                    const cell = document.createElement('td');
-                    const select = document.createElement('select');
-                    select.id = `${person}-${severity}`;
-                    
-                    preferenceOptions.forEach(option => {
-                        const optEl = document.createElement('option');
-                        optEl.value = option.replace(' ', '_').toLowerCase();
-                        optEl.textContent = option;
-                        select.appendChild(optEl);
-                    });
-                    
-                    // Set current value
-                    const currentPref = config.audiences[person][severity + '_notification'] || 'none';
-                    select.value = currentPref;
-                    
-                    select.addEventListener('change', () => updatePreference(person, severity, select.value));
-                    
-                    cell.appendChild(select);
-                    row.appendChild(cell);
+                // Preference select
+                const prefCell = document.createElement('td');
+                const select = document.createElement('select');
+                select.id = `${currentUser}-${severity}`;
+                
+                preferenceOptions.forEach(option => {
+                    const optEl = document.createElement('option');
+                    optEl.value = option.replace(' ', '_').toLowerCase();
+                    optEl.textContent = option;
+                    select.appendChild(optEl);
                 });
                 
-                // Actions
-                const actionsCell = document.createElement('td');
-                const deleteBtn = document.createElement('button');
-                deleteBtn.textContent = 'Delete';
-                deleteBtn.addEventListener('click', () => deletePerson(person));
-                actionsCell.appendChild(deleteBtn);
-                row.appendChild(actionsCell);
+                // Set current value
+                const currentPref = config.audiences[currentUser][severity + '_notification'] || 'none';
+                select.value = currentPref;
+                
+                select.addEventListener('change', () => updatePreference(currentUser, severity, select.value));
+                
+                prefCell.appendChild(select);
+                row.appendChild(prefCell);
                 
                 tbody.appendChild(row);
-            }
-        }
-        
-        // Update person select dropdowns
-        function updatePersonSelects() {
-            const personSelects = [
-                document.getElementById('device-person-select'),
-                document.getElementById('test-person')
-            ];
-            
-            personSelects.forEach(select => {
-                select.innerHTML = '';
-                
-                for (const person in config.audiences) {
-                    const option = document.createElement('option');
-                    option.value = person;
-                    option.textContent = person;
-                    select.appendChild(option);
-                }
-                
-                if (select.id === 'device-person-select' && select.options.length > 0) {
-                    loadDevicesForPerson();
-                }
             });
         }
         
-        // Load devices for selected person
-        function loadDevicesForPerson() {
-            const select = document.getElementById('device-person-select');
-            const person = select.value;
+        // Load devices for current user
+        function loadDevicesForUser() {
+            if (!currentUser || !config.audiences[currentUser]) return;
             
-            if (!person) return;
-            
-            const personConfig = config.audiences[person];
+            const personConfig = config.audiences[currentUser];
             
             // Update device lists
             updateDeviceList('all', personConfig.devices?.all || []);
@@ -439,48 +422,6 @@ curl -X POST http://your-homeassistant:8732/notify \\
             });
         }
         
-        // Add a new person
-        function addPerson() {
-            const nameInput = document.getElementById('new-person-name');
-            const name = nameInput.value.trim().toLowerCase();
-            
-            if (!name) {
-                showStatusMessage('Please enter a name for the new person', 'error');
-                return;
-            }
-            
-            if (config.audiences[name]) {
-                showStatusMessage(`Person "${name}" already exists`, 'error');
-                return;
-            }
-            
-            // Add to config
-            config.audiences[name] = {
-                critical_notification: 'all_devices',
-                warning_notification: 'mobile_only',
-                info_notification: 'log_only',
-                devices: {
-                    all: [],
-                    mobile: [],
-                    desktop: []
-                }
-            };
-            
-            // Save config
-            saveConfig();
-            
-            // Clear input
-            nameInput.value = '';
-        }
-        
-        // Delete a person
-        function deletePerson(person) {
-            if (confirm(`Are you sure you want to delete ${person}?`)) {
-                delete config.audiences[person];
-                saveConfig();
-            }
-        }
-        
         // Update notification preference
         function updatePreference(person, severity, value) {
             config.audiences[person][severity + '_notification'] = value;
@@ -497,19 +438,16 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 return;
             }
             
-            const personSelect = document.getElementById('device-person-select');
-            const person = personSelect.value;
-            
-            if (!person) return;
+            if (!currentUser) return;
             
             // Initialize devices object if it doesn't exist
-            if (!config.audiences[person].devices) {
-                config.audiences[person].devices = { all: [], mobile: [], desktop: [] };
+            if (!config.audiences[currentUser].devices) {
+                config.audiences[currentUser].devices = { all: [], mobile: [], desktop: [] };
             }
             
             // Add to list if not already present
-            if (!config.audiences[person].devices[type].includes(device)) {
-                config.audiences[person].devices[type].push(device);
+            if (!config.audiences[currentUser].devices[type].includes(device)) {
+                config.audiences[currentUser].devices[type].push(device);
                 saveConfig();
             }
             
@@ -519,12 +457,9 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Remove a device
         function removeDevice(type, device) {
-            const personSelect = document.getElementById('device-person-select');
-            const person = personSelect.value;
+            if (!currentUser) return;
             
-            if (!person) return;
-            
-            const devices = config.audiences[person].devices[type];
+            const devices = config.audiences[currentUser].devices[type];
             const index = devices.indexOf(device);
             
             if (index !== -1) {
@@ -535,7 +470,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Save configuration
         function saveConfig() {
-            fetch('/config', {
+            fetch(window.location.pathname + 'config', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -558,17 +493,16 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Send a test notification
         function sendTestNotification() {
-            const person = document.getElementById('test-person').value;
             const severity = document.getElementById('test-severity').value;
             const title = document.getElementById('test-title').value;
             const message = document.getElementById('test-message').value;
             
-            if (!person || !title || !message) {
+            if (!currentUser || !title || !message) {
                 showStatusMessage('Please fill in all fields', 'error');
                 return;
             }
             
-            fetch('/notify', {
+            fetch(window.location.pathname + 'notify', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -577,13 +511,13 @@ curl -X POST http://your-homeassistant:8732/notify \\
                     title: title,
                     message: message,
                     severity: severity,
-                    audience: [person]
+                    audience: [currentUser]
                 })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'ok') {
-                    showStatusMessage(`Test notification sent to ${person}`, 'success');
+                    showStatusMessage(`Test notification sent to ${currentUser}`, 'success');
                 } else {
                     showStatusMessage(`Error: ${data.message}`, 'error');
                 }
@@ -647,7 +581,11 @@ def index():
 @app.route("/config", methods=["GET"])
 def get_config():
     """Return the current configuration."""
-    return jsonify(load_config())
+    # Ensure proper content type for JSON
+    return Response(
+        json.dumps(load_config()),
+        mimetype='application/json'
+    )
 
 @app.route(f"{INGRESS_PATH}/config", methods=["POST"])
 @app.route("/config", methods=["POST"])
