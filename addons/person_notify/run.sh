@@ -11,9 +11,11 @@ else
     cp /app/notification_config.yaml.default /app/notification_config.yaml
 fi
 
-# Export the ingress path for Flask
-export INGRESS_PATH=$(cat /etc/nginx/ingress.conf 2>/dev/null | grep -oE '/api/hassio_ingress/[a-zA-Z0-9]+' || echo '')
-echo "INGRESS_PATH set to: $INGRESS_PATH"
+# Check permissions
+if [ -z "$SUPERVISOR_TOKEN" ]; then
+    echo "WARNING: SUPERVISOR_TOKEN not found. Home Assistant API access will not work."
+    echo "Make sure you have enabled API access in the add-on configuration."
+fi
 
 echo "Starting web server on port 8732..."
 python3 main.py

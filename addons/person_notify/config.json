@@ -1,8 +1,8 @@
 {
   "name": "Person-Based Notification Router",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "slug": "person_notify",
-  "description": "Person-based notification routing with severity levels and user preferences",
+  "description": "Person-based notification routing with Home Assistant integration and user-configurable preferences",
   "url": "https://github.com/festion/ha_person_notify",
   "startup": "application",
   "boot": "auto",
@@ -24,5 +24,8 @@
   "ingress": true,
   "ingress_port": 8732,
   "panel_icon": "mdi:bell-alert",
-  "webui": "http://[HOST]:[PORT:8732]/"
+  "webui": "http://[HOST]:[PORT:8732]/",
+  "auth_api": true,
+  "homeassistant_api": true,
+  "hassio_api": true
 }

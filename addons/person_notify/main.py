@@ -3,6 +3,7 @@ import json
 import yaml
 import hashlib
 import os
+import requests
 from flask import Flask, request, jsonify, render_template_string, redirect, url_for, Response
 
 CONFIG_FILE = "notification_config.yaml"
@@ -11,6 +12,7 @@ SENT_MESSAGES = {}
 
 # Check if running in Home Assistant add-on
 INGRESS_PATH = os.environ.get('INGRESS_PATH', '')
+SUPERVISOR_TOKEN = os.environ.get('SUPERVISOR_TOKEN', '')
 
 app = Flask(__name__)
 
@@ -184,7 +186,9 @@ MAIN_TEMPLATE = """
                         <!-- Populated by JavaScript -->
                     </ul>
                     <div class="form-group">
-                        <input type="text" id="add-all-device" placeholder="notify.new_device">
+                        <select id="add-all-device">
+                            <!-- Populated by JavaScript with available notification services -->
+                        </select>
                         <button id="add-all-device-btn">Add Device</button>
                     </div>
                 </div>
@@ -195,7 +199,9 @@ MAIN_TEMPLATE = """
                         <!-- Populated by JavaScript -->
                     </ul>
                     <div class="form-group">
-                        <input type="text" id="add-mobile-device" placeholder="notify.mobile_app_phone">
+                        <select id="add-mobile-device">
+                            <!-- Populated by JavaScript with available notification services -->
+                        </select>
                         <button id="add-mobile-device-btn">Add Device</button>
                     </div>
                 </div>
@@ -206,7 +212,9 @@ MAIN_TEMPLATE = """
                         <!-- Populated by JavaScript -->
                     </ul>
                     <div class="form-group">
-                        <input type="text" id="add-desktop-device" placeholder="notify.laptop">
+                        <select id="add-desktop-device">
+                            <!-- Populated by JavaScript with available notification services -->
+                        </select>
                         <button id="add-desktop-device-btn">Add Device</button>
                     </div>
                 </div>
@@ -273,6 +281,8 @@ curl -X POST http://your-homeassistant:8732/notify \\
         // Load configuration data
         let config = {};
         let currentUser = '';
+        let availableNotifyServices = [];
+        let haPeople = [];
         
         // Initialize the UI
         document.addEventListener('DOMContentLoaded', function() {
@@ -287,6 +297,12 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 });
             });
             
+            // Fetch Home Assistant people
+            fetchHaPeople();
+            
+            // Fetch notification services
+            fetchNotifyServices();
+            
             // Load config
             fetchConfig();
             
@@ -297,6 +313,86 @@ curl -X POST http://your-homeassistant:8732/notify \\
             document.getElementById('add-desktop-device-btn').addEventListener('click', () => addDevice('desktop'));
             document.getElementById('send-test-btn').addEventListener('click', sendTestNotification);
         });
+        
+        // Fetch Home Assistant people
+        function fetchHaPeople() {
+            fetch(window.location.pathname + 'ha_people')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    haPeople = data.people;
+                    synchronizeConfig();
+                })
+                .catch(error => {
+                    showStatusMessage('Error loading Home Assistant people: ' + error.message, 'error');
+                    console.error('Error loading people:', error);
+                });
+        }
+        
+        // Fetch notification services
+        function fetchNotifyServices() {
+            fetch(window.location.pathname + 'ha_services')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    availableNotifyServices = data.services;
+                    updateDeviceSelects();
+                })
+                .catch(error => {
+                    showStatusMessage('Error loading notification services: ' + error.message, 'error');
+                    console.error('Error loading services:', error);
+                });
+        }
+        
+        // Update device select dropdowns
+        function updateDeviceSelects() {
+            const deviceSelects = [
+                document.getElementById('add-all-device'),
+                document.getElementById('add-mobile-device'),
+                document.getElementById('add-desktop-device')
+            ];
+            
+            deviceSelects.forEach(select => {
+                select.innerHTML = '';
+                
+                availableNotifyServices.forEach(service => {
+                    const option = document.createElement('option');
+                    option.value = service;
+                    option.textContent = service;
+                    select.appendChild(option);
+                });
+            });
+        }
+        
+        // Synchronize config with Home Assistant people
+        function synchronizeConfig() {
+            fetch(window.location.pathname + 'sync_people', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ people: haPeople })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    fetchConfig(); // Reload config after sync
+                } else {
+                    showStatusMessage(`Error: ${data.message}`, 'error');
+                }
+            })
+            .catch(error => {
+                showStatusMessage('Error synchronizing people: ' + error.message, 'error');
+            });
+        }
         
         // Fetch configuration
         function fetchConfig() {
@@ -430,11 +526,11 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Add a device
         function addDevice(type) {
-            const input = document.getElementById(`add-${type}-device`);
-            const device = input.value.trim();
+            const select = document.getElementById(`add-${type}-device`);
+            const device = select.value;
             
             if (!device) {
-                showStatusMessage(`Please enter a device entity ID`, 'error');
+                showStatusMessage(`Please select a notification service`, 'error');
                 return;
             }
             
@@ -450,9 +546,6 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 config.audiences[currentUser].devices[type].push(device);
                 saveConfig();
             }
-            
-            // Clear input
-            input.value = '';
         }
         
         // Remove a device
@@ -546,7 +639,62 @@ curl -X POST http://your-homeassistant:8732/notify \\
 </html>
 """
 
+def get_ha_people():
+    """Get people entities from Home Assistant."""
+    try:
+        response = requests.get(
+            "http://supervisor/core/api/states",
+            headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
+        )
+        if response.ok:
+            states = response.json()
+            people = [
+                state["entity_id"].split(".")[1] 
+                for state in states 
+                if state["entity_id"].startswith("person.")
+            ]
+            return people
+        return []
+    except Exception as e:
+        print(f"Error fetching people: {e}")
+        return []
+
+def get_ha_notify_services():
+    """Get available notification services from Home Assistant."""
+    try:
+        response = requests.get(
+            "http://supervisor/core/api/services",
+            headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"}
+        )
+        if response.ok:
+            services = response.json()
+            notify_services = []
+            for domain in services:
+                if domain["domain"] == "notify":
+                    notify_services.extend([
+                        f"notify.{service}" for service in domain["services"]
+                    ])
+            return notify_services
+        return []
+    except Exception as e:
+        print(f"Error fetching services: {e}")
+        return []
+
+def call_ha_service(service_domain, service, data):
+    """Call a Home Assistant service."""
+    try:
+        response = requests.post(
+            f"http://supervisor/core/api/services/{service_domain}/{service}",
+            headers={"Authorization": f"Bearer {SUPERVISOR_TOKEN}"},
+            json=data
+        )
+        return response.ok
+    except Exception as e:
+        print(f"Error calling service: {e}")
+        return False
+
 def load_config():
+    """Load configuration from file."""
     try:
         with open(CONFIG_FILE, "r") as f:
             return yaml.safe_load(f)
@@ -559,6 +707,7 @@ def load_config():
         }
 
 def save_config(config):
+    """Save configuration to file."""
     try:
         with open(CONFIG_FILE, "w") as f:
             yaml.dump(config, f, default_flow_style=False)
@@ -568,14 +717,69 @@ def save_config(config):
         return False
 
 def get_hash(payload):
+    """Generate a hash for deduplication."""
     base = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(base.encode()).hexdigest()
+
+def sync_config_with_people(people):
+    """Ensure all Home Assistant people are in our config."""
+    config = load_config()
+    
+    # Make sure audiences exists
+    if "audiences" not in config:
+        config["audiences"] = {}
+    
+    # Add any missing people
+    for person in people:
+        if person not in config["audiences"]:
+            config["audiences"][person] = {
+                "critical_notification": "all_devices",
+                "warning_notification": "mobile_only",
+                "info_notification": "log_only",
+                "devices": {
+                    "all": [],
+                    "mobile": [],
+                    "desktop": []
+                }
+            }
+    
+    # Save updated config
+    return save_config(config)
 
 @app.route(f"{INGRESS_PATH}/", methods=["GET"])
 @app.route("/", methods=["GET"])
 def index():
     """Serve the main web UI."""
     return render_template_string(MAIN_TEMPLATE)
+
+@app.route(f"{INGRESS_PATH}/ha_people", methods=["GET"])
+@app.route("/ha_people", methods=["GET"])
+def ha_people():
+    """Return Home Assistant people."""
+    return jsonify({"people": get_ha_people()})
+
+@app.route(f"{INGRESS_PATH}/ha_services", methods=["GET"])
+@app.route("/ha_services", methods=["GET"])
+def ha_services():
+    """Return Home Assistant notification services."""
+    return jsonify({"services": get_ha_notify_services()})
+
+@app.route(f"{INGRESS_PATH}/sync_people", methods=["POST"])
+@app.route("/sync_people", methods=["POST"])
+def sync_people():
+    """Synchronize configuration with Home Assistant people."""
+    if not request.is_json:
+        return jsonify({"status": "error", "message": "Expected JSON payload"}), 400
+        
+    payload = request.get_json()
+    
+    if "people" not in payload:
+        return jsonify({"status": "error", "message": "Missing 'people' field"}), 400
+    
+    if sync_config_with_people(payload["people"]):
+        return jsonify({"status": "ok", "message": "Configuration synchronized with people"})
+    else:
+        return jsonify({"status": "error", "message": "Failed to synchronize configuration"}), 500
 
 @app.route(f"{INGRESS_PATH}/config", methods=["GET"])
 @app.route("/config", methods=["GET"])
@@ -665,10 +869,29 @@ def notify():
         elif preference == "desktop_only":
             devices = target_config.get("devices", {}).get("desktop", [])
         
-        # Send to devices (in a real implementation, this would call Home Assistant services)
+        # Send to devices using Home Assistant services
         for device in devices:
-            print(f"[{target.upper()}] Sending to {device} -> {title}: {message}")
-            notification_count += 1
+            if not device.startswith("notify."):
+                print(f"Warning: Invalid device ID {device}, must start with 'notify.'")
+                continue
+                
+            service = device.split('.')[1]
+            data = {
+                "title": f"[{severity.upper()}] {title}",
+                "message": message,
+                "data": {
+                    "priority": "high" if severity == "critical" else "normal",
+                    "channel": severity,
+                    "ttl": 0 if severity == "critical" else 3600
+                }
+            }
+            
+            success = call_ha_service("notify", service, data)
+            if success:
+                print(f"[{target.upper()}] Successfully sent to {device}")
+                notification_count += 1
+            else:
+                print(f"[{target.upper()}] Failed to send to {device}")
 
     return jsonify({
         "status": "ok", 
@@ -693,5 +916,14 @@ def server_error(e):
     }), 500
 
 if __name__ == "__main__":
+    # Sync with Home Assistant people on startup
+    print(f"Synchronizing with Home Assistant people...")
+    ha_people = get_ha_people()
+    if ha_people:
+        print(f"Found Home Assistant people: {', '.join(ha_people)}")
+        sync_config_with_people(ha_people)
+    else:
+        print("Warning: No Home Assistant people found. Check your Home Assistant configuration.")
+    
     print(f"Starting Flask server on port 8732 with INGRESS_PATH={INGRESS_PATH}")
     app.run(host="0.0.0.0", port=8732)
