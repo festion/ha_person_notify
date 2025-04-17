@@ -1,12 +1,20 @@
+# Person-based notification configuration
 audiences:
-  mobile:
+  jeremy:
     services:
-      - notify.mobile_app_pixel_9_pro_xl
-    min_severity: high
-
-  dashboard:
+      - notify.mobile_app_jeremy_phone
+      - notify.jeremy_laptop
+    min_severity: info
+  
+  sarah:
     services:
-      - persistent_notification.create
-    min_severity: low
+      - notify.mobile_app_sarah_phone
+    min_severity: warning
 
-severity_levels: [low, medium, high, emergency]
+  household:
+    services:
+      - notify.living_room_speaker
+    min_severity: critical
+
+# Severity levels from lowest to highest
+severity_levels: [info, warning, critical]
