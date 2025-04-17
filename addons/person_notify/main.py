@@ -4,7 +4,7 @@ import yaml
 import hashlib
 import os
 import requests
-from flask import Flask, request, jsonify, render_template_string, redirect, url_for, Response
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for, Response, session
 
 CONFIG_FILE = "notification_config.yaml"
 DEDUPLICATION_TTL = 300  # seconds
@@ -15,6 +15,7 @@ INGRESS_PATH = os.environ.get('INGRESS_PATH', '')
 SUPERVISOR_TOKEN = os.environ.get('SUPERVISOR_TOKEN', '')
 
 app = Flask(__name__)
+app.secret_key = os.urandom(24)  # For session management
 
 # Main web UI template with CSS and JavaScript
 MAIN_TEMPLATE = """
@@ -141,6 +142,14 @@ MAIN_TEMPLATE = """
             padding: 10px;
             border-radius: 4px;
         }
+        .user-select {
+            margin-top: 20px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #fffde7;
+            border-radius: 4px;
+            border: 1px solid #ffd600;
+        }
     </style>
 </head>
 <body>
@@ -148,6 +157,14 @@ MAIN_TEMPLATE = """
     
     <div class="user-info" id="user-info">
         <!-- Current user will be displayed here -->
+    </div>
+    
+    <div id="user-select" class="user-select hidden">
+        <p>Please select which user's preferences you want to manage:</p>
+        <select id="select-user">
+            <!-- Populated by JavaScript -->
+        </select>
+        <button id="confirm-user-btn">Confirm</button>
     </div>
     
     <div class="tabs">
@@ -287,6 +304,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
         let config = {};
         let currentUser = '';
         let availableNotifyServices = [];
+        let haPeople = [];
         
         // Initialize the UI
         document.addEventListener('DOMContentLoaded', function() {
@@ -301,18 +319,38 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 });
             });
             
-            // Fetch current user
-            fetchCurrentUser();
-            
-            // Fetch notification services
-            fetchNotifyServices();
+            // Fetch Home Assistant people
+            fetchHaPeople();
             
             // Set up event listeners
+            document.getElementById('confirm-user-btn').addEventListener('click', selectUser);
             document.getElementById('add-all-device-btn').addEventListener('click', () => addDevice('all'));
             document.getElementById('add-mobile-device-btn').addEventListener('click', () => addDevice('mobile'));
             document.getElementById('add-desktop-device-btn').addEventListener('click', () => addDevice('desktop'));
             document.getElementById('send-test-btn').addEventListener('click', sendTestNotification);
+            
+            // Fetch notification services
+            fetchNotifyServices();
         });
+        
+        // Fetch Home Assistant people
+        function fetchHaPeople() {
+            fetch(window.location.pathname + 'ha_people')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    haPeople = data.people;
+                    fetchCurrentUser();
+                })
+                .catch(error => {
+                    showStatusMessage('Error loading Home Assistant people: ' + error.message, 'error');
+                    console.error('Error loading people:', error);
+                });
+        }
         
         // Fetch current user
         function fetchCurrentUser() {
@@ -324,8 +362,15 @@ curl -X POST http://your-homeassistant:8732/notify \\
                     return response.json();
                 })
                 .then(data => {
-                    currentUser = data.user;
-                    document.getElementById('user-info').textContent = `Signed in as: ${currentUser}`;
+                    if (data.user && data.user !== 'unknown') {
+                        // We have a valid user
+                        currentUser = data.user;
+                        document.getElementById('user-info').textContent = `Signed in as: ${currentUser}`;
+                        document.getElementById('user-select').classList.add('hidden');
+                    } else {
+                        // We need to ask the user to select a person
+                        showUserSelect();
+                    }
                     
                     // Load config after getting current user
                     fetchConfig();
@@ -333,7 +378,51 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 .catch(error => {
                     showStatusMessage('Error determining current user: ' + error.message, 'error');
                     console.error('Error loading user:', error);
+                    showUserSelect();
                 });
+        }
+        
+        // Show user selection UI
+        function showUserSelect() {
+            const select = document.getElementById('select-user');
+            select.innerHTML = '';
+            
+            haPeople.forEach(person => {
+                const option = document.createElement('option');
+                option.value = person;
+                option.textContent = person;
+                select.appendChild(option);
+            });
+            
+            document.getElementById('user-select').classList.remove('hidden');
+        }
+        
+        // Handle user selection
+        function selectUser() {
+            const select = document.getElementById('select-user');
+            currentUser = select.value;
+            
+            // Set the user via API
+            fetch(window.location.pathname + 'set_user', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ user: currentUser })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    document.getElementById('user-info').textContent = `Signed in as: ${currentUser}`;
+                    document.getElementById('user-select').classList.add('hidden');
+                    fetchConfig();
+                } else {
+                    showStatusMessage(`Error: ${data.message}`, 'error');
+                }
+            })
+            .catch(error => {
+                showStatusMessage('Error setting user: ' + error.message, 'error');
+            });
         }
         
         // Fetch notification services
@@ -400,7 +489,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
             const tbody = document.getElementById('preferences-table');
             tbody.innerHTML = '';
             
-            if (!currentUser || !config.audiences[currentUser]) return;
+            if (!currentUser || !config.audiences || !config.audiences[currentUser]) return;
             
             const preferenceOptions = ['All Devices', 'Mobile Only', 'Desktop Only', 'Log Only', 'None'];
             const severities = ['critical', 'warning', 'info'];
@@ -440,7 +529,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Load devices for current user
         function loadDevicesForUser() {
-            if (!currentUser || !config.audiences[currentUser]) return;
+            if (!currentUser || !config.audiences || !config.audiences[currentUser]) return;
             
             const personConfig = config.audiences[currentUser];
             
@@ -488,7 +577,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
                 return;
             }
             
-            if (!currentUser) return;
+            if (!currentUser || !config.audiences[currentUser]) return;
             
             // Initialize devices object if it doesn't exist
             if (!config.audiences[currentUser].devices) {
@@ -504,7 +593,7 @@ curl -X POST http://your-homeassistant:8732/notify \\
         
         // Remove a device
         function removeDevice(type, device) {
-            if (!currentUser) return;
+            if (!currentUser || !config.audiences[currentUser]) return;
             
             const devices = config.audiences[currentUser].devices[type];
             const index = devices.indexOf(device);
@@ -593,22 +682,19 @@ curl -X POST http://your-homeassistant:8732/notify \\
 </html>
 """
 
-def get_current_user(request):
-    """Determine the current user based on Home Assistant user."""
-    # In a real implementation, this would get the user from the Home Assistant auth
-    # For now, we'll try to get it from the request headers or use a default user
-    ha_user = request.headers.get('X-Supervisor-User', None)
+def get_current_user_from_request(request):
+    """Determine the current user from the request."""
+    # Try to get from session first (most reliable)
+    if 'user' in session:
+        return session['user']
     
+    # Try to get from Home Assistant headers
+    ha_user = request.headers.get('X-Supervisor-User', None)
     if ha_user:
         return ha_user
     
-    # Fallback to the first person in the config
-    config = load_config()
-    if config and "audiences" in config and config["audiences"]:
-        return next(iter(config["audiences"].keys()))
-    
-    # Last resort default
-    return "default_user"
+    # If we still don't have a user, return unknown
+    return "unknown"
 
 def get_ha_people():
     """Get people entities from Home Assistant."""
@@ -727,8 +813,25 @@ def index():
 @app.route("/current_user", methods=["GET"])
 def current_user():
     """Return the current user."""
-    user = get_current_user(request)
+    user = get_current_user_from_request(request)
     return jsonify({"user": user})
+
+@app.route(f"{INGRESS_PATH}/set_user", methods=["POST"])
+@app.route("/set_user", methods=["POST"])
+def set_user():
+    """Set the current user."""
+    if not request.is_json:
+        return jsonify({"status": "error", "message": "Expected JSON payload"}), 400
+        
+    payload = request.get_json()
+    
+    if "user" not in payload:
+        return jsonify({"status": "error", "message": "Missing 'user' field"}), 400
+    
+    # Store user in session
+    session['user'] = payload["user"]
+    
+    return jsonify({"status": "ok", "message": "User set successfully"})
 
 @app.route(f"{INGRESS_PATH}/ha_people", methods=["GET"])
 @app.route("/ha_people", methods=["GET"])
