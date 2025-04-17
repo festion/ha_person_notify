@@ -2,11 +2,15 @@ import time
 import json
 import yaml
 import hashlib
+import os
 from flask import Flask, request, jsonify, render_template_string
 
 CONFIG_FILE = "notification_config.yaml"
 DEDUPLICATION_TTL = 300  # seconds
 SENT_MESSAGES = {}
+
+# Check if running in Home Assistant add-on
+INGRESS_PATH = os.environ.get('INGRESS_PATH', '')
 
 app = Flask(__name__)
 
@@ -41,18 +45,28 @@ STATUS_PAGE = """
 """
 
 def load_config():
-    with open(CONFIG_FILE, "r") as f:
-        return yaml.safe_load(f)
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        print(f"Error loading config: {e}")
+        # Return a default config if file can't be loaded
+        return {
+            "audiences": {},
+            "severity_levels": ["info", "warning", "critical"]
+        }
 
 def get_hash(payload):
     base = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(base.encode()).hexdigest()
 
+@app.route(f"{INGRESS_PATH}/", methods=["GET"])
 @app.route("/", methods=["GET"])
 def index():
     """Serve a simple status page with API documentation."""
     return render_template_string(STATUS_PAGE)
 
+@app.route(f"{INGRESS_PATH}/notify", methods=["POST"])
 @app.route("/notify", methods=["POST"])
 def notify():
     """Handle notification requests."""
@@ -90,12 +104,16 @@ def notify():
     
     notification_count = 0
     for target in audience:
-        target_config = config["audiences"].get(target, {})
+        target_config = config.get("audiences", {}).get(target, {})
         min_severity = target_config.get("min_severity", "low")
-        if config["severity_levels"].index(severity) >= config["severity_levels"].index(min_severity):
-            for service in target_config.get("services", []):
-                print(f"[{target.upper()}] {service} -> {title}: {message}")
-                notification_count += 1
+        try:
+            if config.get("severity_levels", []).index(severity) >= config.get("severity_levels", []).index(min_severity):
+                for service in target_config.get("services", []):
+                    print(f"[{target.upper()}] {service} -> {title}: {message}")
+                    notification_count += 1
+        except ValueError:
+            # Handle case where severity is not in the list
+            print(f"Warning: Unknown severity level '{severity}'")
 
     return jsonify({
         "status": "ok", 
@@ -120,4 +138,5 @@ def server_error(e):
     }), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    print(f"Starting Flask server on port 8732 with INGRESS_PATH={INGRESS_PATH}")
+    app.run(host="0.0.0.0", port=8732)

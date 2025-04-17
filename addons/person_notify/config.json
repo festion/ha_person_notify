@@ -1,12 +1,19 @@
 {
   "name": "Person-Based Notification Router",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "slug": "person_notify",
   "description": "Person-based notification routing with severity levels and user preferences",
   "url": "https://github.com/festion/ha_person_notify",
   "startup": "application",
   "boot": "auto",
+  "init": false,
   "host_network": true,
+  "ports": {
+    "8732/tcp": 8732
+  },
+  "ports_description": {
+    "8732/tcp": "Web interface"
+  },
   "options": {
     "log_level": "info"
   },
@@ -15,6 +22,7 @@
   },
   "arch": ["amd64", "aarch64", "armv7"],
   "ingress": true,
-  "ingress_port": 8080,
-  "panel_icon": "mdi:bell-alert"
+  "ingress_port": 8732,
+  "panel_icon": "mdi:bell-alert",
+  "webui": "http://[HOST]:[PORT:8732]/"
 }
