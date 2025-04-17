@@ -21,3 +21,15 @@ A flexible notification system for Home Assistant that allows sending notificati
 ## Usage
 
 [Usage examples will be added]
+## Add-on Installation
+
+To install this add-on, you need to add the repository to your Home Assistant instance:
+
+1. Go to Settings → Add-ons → Add-on Store
+2. Click the three dots menu in the top right corner
+3. Select "Repositories"
+4. Add the repository URL: https://github.com/festion/ha_person_notify
+5. Click "Add"
+6. The "Person-Based Notification Router" add-on should now appear in your add-on store
+7. Click on it and then click "Install"
+
