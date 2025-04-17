@@ -1,0 +1,26 @@
+# Home Assistant specific
+*.db
+*.db-shm
+*.db-wal
+*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.DS_Store
+.storage/
+.cloud/
+.google.token
+
+# Development environment
+.vscode/
+.idea/
+*.swp
+*.swo
+.env
+venv/
+ENV/
+
+# Custom component files
+custom_components/__pycache__/
+custom_components/*/__pycache__/
+custom_components/*/translations/*.json

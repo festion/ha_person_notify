@@ -1,0 +1,81 @@
+# Generic notification service
+script:
+  notify_person:
+    fields:
+      person:
+        description: "Person to notify"
+        example: "jeremy"
+      severity:
+        description: "Notification severity (critical, warning, info)"
+        example: "critical"
+      title:
+        description: "Notification title"
+        example: "Water Leak Detected"
+      message:
+        description: "Notification message"
+        example: "Water leak detected in the basement"
+    sequence:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.notification_sent
+
+      # Get user preference for this severity level
+      - variables:
+          preference: "{{ states('input_select.' + person + '_' + severity + '_notification') }}"
+      
+      # Log all notifications regardless of delivery
+      - service: system_log.write
+        data:
+          message: "Notification for {{ person | title }}: [{{ severity | upper }}] {{ title }} - {{ message }}"
+          level: "info"
+      
+      # Skip further processing if preference is "None" or "Log Only"
+      - condition: not
+        conditions:
+          - condition: or
+            conditions:
+              - condition: template
+                value_template: "{{ preference == 'None' }}"
+              - condition: template
+                value_template: "{{ preference == 'Log Only' and severity == 'info' }}"
+      
+      # Send to all devices
+      - if:
+          condition: template
+          value_template: "{{ preference == 'All Devices' }}"
+        then:
+          - service: notify.notify
+            data:
+              target: "{{ person }}_devices"
+              title: "{{ severity | upper }}: {{ title }}"
+              message: "{{ message }}"
+              data:
+                channel: "{{ severity }}"
+                ttl: "{{ 0 if severity == 'critical' else 3600 }}"
+                priority: "{{ 'high' if severity == 'critical' else 'normal' }}"
+      
+      # Send to mobile only
+      - if:
+          condition: template
+          value_template: "{{ preference == 'Mobile Only' }}"
+        then:
+          - service: notify.mobile_app
+            data:
+              target: "{{ person }}_mobile_devices"
+              title: "{{ severity | upper }}: {{ title }}"
+              message: "{{ message }}"
+              data:
+                channel: "{{ severity }}"
+                ttl: "{{ 0 if severity == 'critical' else 3600 }}"
+                priority: "{{ 'high' if severity == 'critical' else 'normal' }}"
+      
+      # Send to desktop only
+      - if:
+          condition: template
+          value_template: "{{ preference == 'Desktop Only' }}"
+        then:
+          - service: notify.persistent_notification
+            data:
+              target: "{{ person }}_desktop_devices"
+              title: "{{ severity | upper }}: {{ title }}"
+              message: "{{ message }}"

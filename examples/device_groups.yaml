@@ -1,0 +1,18 @@
+# Device groups for Jeremy
+group:
+  jeremy_devices:
+    name: "Jeremy's Devices"
+    entities:
+      - device_tracker.jeremy_phone
+      - device_tracker.jeremy_laptop
+      - media_player.jeremy_speaker
+  
+  jeremy_mobile_devices:
+    name: "Jeremy's Mobile Devices"
+    entities:
+      - device_tracker.jeremy_phone
+  
+  jeremy_desktop_devices:
+    name: "Jeremy's Desktop Devices"
+    entities:
+      - device_tracker.jeremy_laptop

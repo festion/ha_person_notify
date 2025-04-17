@@ -1,0 +1,34 @@
+# Person-based notification configuration
+persons:
+  jeremy:
+    critical_notification: "All Devices"
+    warning_notification: "Mobile Only"
+    info_notification: "Log Only"
+    devices:
+      all:
+        - notify.mobile_app_jeremy_phone
+        - notify.jeremy_laptop
+        - media_player.jeremy_speaker
+      mobile:
+        - notify.mobile_app_jeremy_phone
+      desktop:
+        - notify.jeremy_laptop
+  
+  sarah:
+    critical_notification: "All Devices"
+    warning_notification: "All Devices"
+    info_notification: "Mobile Only"
+    devices:
+      all:
+        - notify.mobile_app_sarah_phone
+        - notify.sarah_tablet
+      mobile:
+        - notify.mobile_app_sarah_phone
+      desktop:
+        - notify.sarah_tablet
+
+# Severity configuration
+severities:
+  - info
+  - warning
+  - critical
